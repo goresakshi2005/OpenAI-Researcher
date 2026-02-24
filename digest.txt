@@ -1,0 +1,1706 @@
+Directory structure:
+└── OpenAI Researcher/
+    ├── OpenAI Research.py
+    ├── OpenAI Researcher.py
+    ├── view_memory.py
+    ├── backend/
+    │   ├── db.sqlite3
+    │   ├── manage.py
+    │   ├── requirements.txt
+    │   ├── backend/
+    │   │   ├── __init__.py
+    │   │   ├── asgi.py
+    │   │   ├── settings.py
+    │   │   ├── urls.py
+    │   │   └── wsgi.py
+    │   ├── chat/
+    │   │   ├── __init__.py
+    │   │   ├── admin.py
+    │   │   ├── apps.py
+    │   │   ├── models.py
+    │   │   ├── serializers.py
+    │   │   ├── services.py
+    │   │   ├── tests.py
+    │   │   ├── urls.py
+    │   │   ├── views.py
+    │   │   └── migrations/
+    │   │       ├── 0001_initial.py
+    │   │       └── __init__.py
+    │   └── chroma_db/
+    │       ├── chroma.sqlite3
+    │       └── 6a2d2a81-f430-461f-adc6-010a6baa735b/
+    │           ├── data_level0.bin
+    │           ├── header.bin
+    │           ├── length.bin
+    │           └── link_lists.bin
+    ├── chroma_db/
+    │   ├── chroma.sqlite3
+    │   ├── 9677fbd0-9b61-4069-b919-de7971c4e771/
+    │   │   ├── data_level0.bin
+    │   │   ├── header.bin
+    │   │   ├── length.bin
+    │   │   └── link_lists.bin
+    │   └── a4d1a81d-01c3-43ba-aac1-23b2303d46f2/
+    │       ├── data_level0.bin
+    │       ├── header.bin
+    │       ├── length.bin
+    │       └── link_lists.bin
+    └── frontend/
+        ├── README.md
+        ├── eslint.config.js
+        ├── index.html
+        ├── package.json
+        ├── tailwind.config.js
+        ├── vite.config.js
+        └── src/
+            ├── api.js
+            ├── App.css
+            ├── App.jsx
+            ├── index.css
+            ├── main.jsx
+            └── components/
+                ├── ChatMessage.jsx
+                ├── Rating.jsx
+                └── TypingIndicator.jsx
+
+================================================
+FILE: OpenAI Research.py
+================================================
+import os
+import sys
+from dotenv import load_dotenv
+from tavily import TavilyClient
+from openai_research import OpenAI
+
+# Load environment variables
+load_dotenv()
+
+# Validate API keys
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+if not TAVILY_API_KEY:
+    print("Error: TAVILY_API_KEY not found in environment variables.")
+    sys.exit(1)
+if not OPENAI_API_KEY:
+    print("Error: OPENAI_API_KEY not found in environment variables.")
+    sys.exit(1)
+
+# Initialize clients
+tavily = TavilyClient(api_key=TAVILY_API_KEY)
+openai = OpenAI(api_key=OPENAI_API_KEY)
+
+# System prompt for the research assistant
+SYSTEM_PROMPT = """You are an expert research assistant with access to real-time web search results. Your goal is to provide accurate, well-synthesized answers based on the search results provided.
+
+Guidelines:
+- Synthesize information from multiple sources when available.
+- Cite your sources by referencing the title or URL from the search results.
+- If the search results do not contain relevant information, clearly state that and answer based on your own knowledge, noting the limitation.
+- Structure your answers for readability: use paragraphs, bullet points, or headings as appropriate.
+- Be concise but thorough. Avoid repeating the same information.
+- If the user asks a follow-up question, use the conversation history and the new search results to answer contextually.
+- Always maintain a helpful, neutral tone."""
+
+# Initialize conversation history (system message + optional past exchanges)
+messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+def search_web(query: str) -> str:
+    """
+    Query Tavily and return a formatted string of search results.
+    """
+    try:
+        response = tavily.search(query=query, search_depth="advanced")
+        results = response.get("results", [])
+        if not results:
+            return "No relevant web search results were found for this query."
+
+        # Build a clean context block
+        context_lines = ["Web Search Results:"]
+        for idx, res in enumerate(results, 1):
+            title = res.get("title", "Untitled")
+            content = res.get("content", "").strip()
+            url = res.get("url", "")
+            # Truncate content if too long (optional, but helps with token limits)
+            if len(content) > 500:
+                content = content[:500] + "..."
+            context_lines.append(f"\n{idx}. **{title}**")
+            context_lines.append(f"   {content}")
+            context_lines.append(f"   Source: {url}")
+        return "\n".join(context_lines)
+    except Exception as e:
+        return f"Error during web search: {str(e)}"
+
+def ask_assistant(user_input: str) -> str:
+    """
+    Get response from OpenAI using conversation history and current web search.
+    """
+    # 1. Get search results for the current query
+    print("\n[🔍 Searching the web...]")
+    search_context = search_web(user_input)
+
+    # 2. Build the user message that includes both the query and the search context
+    user_message = f"User question: {user_input}\n\n{search_context}\n\nPlease answer based on the above search results."
+
+    # 3. Add the user message to the conversation
+    messages.append({"role": "user", "content": user_message})
+
+    # 4. Get completion from OpenAI
+    try:
+        print("[🤔 Generating answer...]")
+        response = openai.chat.completions.create(
+            model="gpt-4",  # Change to "gpt-4o" or "gpt-3.5-turbo" as needed
+            messages=messages,
+            temperature=0.3,
+            max_tokens=1500,
+            top_p=0.9,
+            frequency_penalty=0.2,
+            presence_penalty=0.2
+        )
+        assistant_reply = response.choices[0].message.content
+
+        # 5. Add assistant's reply to history
+        messages.append({"role": "assistant", "content": assistant_reply})
+
+        return assistant_reply
+    except Exception as e:
+        error_msg = f"Error generating answer: {str(e)}"
+        # Remove the last user message if we couldn't get a response, to keep history clean
+        if messages and messages[-1]["role"] == "user":
+            messages.pop()
+        return error_msg
+
+def main():
+    print("=" * 60)
+    print("     OpenAI Researcher with Web Search (type 'exit' to quit)")
+    print("=" * 60)
+
+    while True:
+        user_input = input("\nYou: ").strip()
+        if user_input.lower() in ("exit", "quit"):
+            print("Goodbye!")
+            break
+        if not user_input:
+            continue
+
+        answer = ask_assistant(user_input)
+        print(f"\nAssistant:\n{answer}\n")
+        print("-" * 60)
+
+if __name__ == "__main__":
+    main()
+
+
+================================================
+FILE: OpenAI Researcher.py
+================================================
+import os
+import sys
+from dotenv import load_dotenv
+from tavily import TavilyClient
+from openai import OpenAI
+import chromadb
+from chromadb.utils import embedding_functions
+
+# Load environment variables
+load_dotenv()
+
+# Validate API keys
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+if not TAVILY_API_KEY:
+    print("Error: TAVILY_API_KEY not found in environment variables.")
+    sys.exit(1)
+if not OPENAI_API_KEY:
+    print("Error: OPENAI_API_KEY not found in environment variables.")
+    sys.exit(1)
+
+# Initialize clients
+tavily = TavilyClient(api_key=TAVILY_API_KEY)
+openai = OpenAI(api_key=OPENAI_API_KEY)
+
+# -------------------- RL Memory (ChromaDB) --------------------
+client = chromadb.PersistentClient(path="./chroma_db")
+embedding_fn = embedding_functions.OpenAIEmbeddingFunction(
+    api_key=OPENAI_API_KEY,
+    model_name="text-embedding-3-small"
+)
+
+pos_collection = client.get_or_create_collection(
+    name="successful_interactions",
+    embedding_function=embedding_fn
+)
+neg_collection = client.get_or_create_collection(
+    name="unsuccessful_interactions",
+    embedding_function=embedding_fn
+)
+
+def add_interaction(query: str, response: str, rating: int):
+    collection = pos_collection if rating >= 4 else neg_collection
+    count = collection.count()
+    doc_id = f"interaction_{count}"
+    collection.add(
+        documents=[f"Q: {query}\nA: {response}"],
+        metadatas=[{"query": query, "rating": rating}],
+        ids=[doc_id]
+    )
+    print(f"[✓] Stored {'successful' if rating >=4 else 'unsuccessful'} interaction (rating {rating})")
+
+def retrieve_examples(query: str, n_pos: int = 2, n_neg: int = 1) -> tuple:
+    pos_examples = []
+    neg_examples = []
+    
+    if pos_collection.count() > 0:
+        pos_results = pos_collection.query(query_texts=[query], n_results=n_pos)
+        if pos_results['documents'][0]:
+            for doc, meta in zip(pos_results['documents'][0], pos_results['metadatas'][0]):
+                pos_examples.append(f"✅ Good example (rating {meta['rating']}):\n{doc}")
+    
+    if neg_collection.count() > 0:
+        neg_results = neg_collection.query(query_texts=[query], n_results=n_neg)
+        if neg_results['documents'][0]:
+            for doc, meta in zip(neg_results['documents'][0], neg_results['metadatas'][0]):
+                neg_examples.append(f"❌ Poor example (rating {meta['rating']}) – avoid these mistakes:\n{doc}")
+    
+    return "\n\n".join(pos_examples), "\n\n".join(neg_examples)
+
+# -------------------- System Prompt --------------------
+BASE_SYSTEM_PROMPT = """You are an expert research assistant with access to real-time web search results. Your goal is to provide accurate, well-synthesized answers based on the search results provided.
+
+Guidelines:
+- Synthesize information from multiple sources when available.
+- Cite your sources by referencing the title or URL from the search results.
+- If the search results do not contain relevant information, clearly state that and answer based on your own knowledge, noting the limitation.
+- Structure your answers for readability: use paragraphs, bullet points, or headings as appropriate.
+- Be concise but thorough. Avoid repeating the same information.
+- **If the user asks a follow-up question or a short query, use the conversation history to understand the context and provide a relevant answer.** Always consider the previous topics discussed.
+- Always maintain a helpful, neutral tone."""
+
+messages = [{"role": "system", "content": BASE_SYSTEM_PROMPT}]
+
+low_rating_flag = False
+last_user_input = None
+last_assistant_response = None
+
+# -------------------- Web Search with Contextual Expansion --------------------
+def search_web(query: str, context_query: str = None) -> str:
+    """
+    Query Tavily. If context_query is provided and not already contained in the query,
+    combine them for better context.
+    """
+    if context_query and context_query.lower() not in query.lower():
+        expanded_query = f"{context_query} {query}"
+        print(f"[🔍] Expanded search: '{expanded_query}'")
+    else:
+        expanded_query = query
+
+    try:
+        response = tavily.search(query=expanded_query, search_depth="advanced")
+        results = response.get("results", [])
+        if not results:
+            return "No relevant web search results were found for this query."
+
+        context_lines = ["Web Search Results:"]
+        for idx, res in enumerate(results, 1):
+            title = res.get("title", "Untitled")
+            content = res.get("content", "").strip()
+            url = res.get("url", "")
+            if len(content) > 500:
+                content = content[:500] + "..."
+            context_lines.append(f"\n{idx}. **{title}**")
+            context_lines.append(f"   {content}")
+            context_lines.append(f"   Source: {url}")
+        return "\n".join(context_lines)
+    except Exception as e:
+        return f"Error during web search: {str(e)}"
+
+# -------------------- Assistant with RL Memory and Context --------------------
+def ask_assistant(user_input: str) -> str:
+    global low_rating_flag, last_user_input, last_assistant_response
+
+    # 1. Retrieve similar past examples
+    pos_examples, neg_examples = retrieve_examples(user_input)
+    if pos_examples:
+        print("[📚] Found relevant successful past interactions.")
+    if neg_examples:
+        print("[⚠️] Found past low‑rated interactions to avoid.")
+
+    # 2. Get fresh search results, expanded with previous topic if available
+    print("\n[🔍 Searching the web...]")
+    search_context = search_web(user_input, context_query=last_user_input)
+
+    # 3. Build the user message
+    user_message_parts = []
+    
+    if pos_examples:
+        user_message_parts.append(f"Here are some examples of successful answers to similar questions:\n{pos_examples}")
+    
+    if neg_examples:
+        user_message_parts.append(f"Pay attention to the following examples that were rated poorly. Do NOT repeat these mistakes:\n{neg_examples}")
+    
+    # Add a contextual reminder if we have a previous topic
+    if last_user_input:
+        context_hint = f"Note: The user's previous question was about '{last_user_input}'. Please interpret the current query ('{user_input}') in that context."
+        user_message_parts.append(context_hint)
+    
+    user_message_parts.append(f"User question: {user_input}")
+    user_message_parts.append(search_context)
+    
+    if low_rating_flag and last_user_input and last_assistant_response:
+        improvement_note = (
+            f"Note: The previous question was: \"{last_user_input}\" and your answer was:\n"
+            f"\"{last_assistant_response}\"\n"
+            f"That answer was rated poorly. Please ensure your new answer for the current question "
+            f"(\"{user_input}\") addresses the shortcomings and is significantly improved – be more thorough, "
+            f"accurate, well‑cited, and engaging. Use examples, analogies, and important details."
+        )
+        user_message_parts.append(improvement_note)
+        low_rating_flag = False
+    elif low_rating_flag:
+        user_message_parts.append("Note: The previous answer was rated poorly. Please ensure this response is thorough, accurate, and well‑cited.")
+        low_rating_flag = False
+    
+    user_message_parts.append("Please answer based on the above search results, and follow the style of the successful examples if relevant.")
+    user_message = "\n\n".join(user_message_parts)
+
+    messages.append({"role": "user", "content": user_message})
+
+    try:
+        print("[🤔 Generating answer...]")
+        response = openai.chat.completions.create(
+            model="gpt-4",
+            messages=messages,
+            temperature=0.3,
+            max_tokens=1500,
+            top_p=0.9,
+            frequency_penalty=0.2,
+            presence_penalty=0.2
+        )
+        assistant_reply = response.choices[0].message.content
+        messages.append({"role": "assistant", "content": assistant_reply})
+
+        # Store this exchange for future context
+        last_user_input = user_input
+        last_assistant_response = assistant_reply
+
+        return assistant_reply
+    except Exception as e:
+        error_msg = f"Error generating answer: {str(e)}"
+        if messages and messages[-1]["role"] == "user":
+            messages.pop()
+        return error_msg
+
+# -------------------- Main Loop --------------------
+def main():
+    global low_rating_flag, last_user_input, last_assistant_response
+    print("=" * 60)
+    print("     OpenAI Researcher with RL Memory (type 'exit' to quit)")
+    print("=" * 60)
+    print("\nAfter each answer, rate it from 1 (poor) to 5 (excellent).")
+    print("High ratings (4‑5) will be stored as good examples.")
+    print("Low ratings (1‑3) will be stored as examples to avoid.\n")
+
+    while True:
+        user_input = input("\nYou: ").strip()
+        if user_input.lower() in ("exit", "quit"):
+            print("Goodbye!")
+            break
+        if not user_input:
+            continue
+
+        answer = ask_assistant(user_input)
+        print(f"\nAssistant:\n{answer}\n")
+        print("-" * 60)
+
+        while True:
+            try:
+                rating = int(input("\nRate this response (1-5): ").strip())
+                if 1 <= rating <= 5:
+                    break
+                else:
+                    print("Please enter a number between 1 and 5.")
+            except ValueError:
+                print("Invalid input. Please enter a number.")
+
+        add_interaction(user_input, answer, rating)
+
+        if rating < 4:
+            low_rating_flag = True
+            print("[↗️] Low rating noted – next answer will aim to improve based on this context.")
+        else:
+            low_rating_flag = False
+
+if __name__ == "__main__":
+    main()
+
+
+================================================
+FILE: view_memory.py
+================================================
+import chromadb
+from chromadb.utils import embedding_functions
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Connect to the persistent database (same path as your main script)
+client = chromadb.PersistentClient(path="./chroma_db")
+
+embedding_fn = embedding_functions.OpenAIEmbeddingFunction(
+    api_key=OPENAI_API_KEY,
+    model_name="text-embedding-3-small"
+)
+
+# Get collections (they will be created automatically if they exist)
+pos_collection = client.get_or_create_collection(
+    name="successful_interactions",
+    embedding_function=embedding_fn
+)
+neg_collection = client.get_or_create_collection(
+    name="unsuccessful_interactions",
+    embedding_function=embedding_fn
+)
+
+def print_collection(collection, name):
+    print(f"\n--- {name} ---")
+    all_items = collection.get()
+    if not all_items['ids']:
+        print("No entries.")
+        return
+    for i, (doc_id, doc, meta) in enumerate(zip(all_items['ids'], all_items['documents'], all_items['metadatas'])):
+        print(f"\nID: {doc_id}")
+        print(f"Rating: {meta['rating']}")
+        print(f"Query: {meta['query']}")
+        print(f"Full interaction:\n{doc}")
+        print("-" * 40)
+
+print_collection(pos_collection, "SUCCESSFUL INTERACTIONS (rating â‰¥ 4)")
+print_collection(neg_collection, "UNSUCCESSFUL INTERACTIONS (rating < 4)")
+
+
+================================================
+FILE: backend/db.sqlite3
+================================================
+[Non-text file]
+
+
+================================================
+FILE: backend/manage.py
+================================================
+#!/usr/bin/env python
+"""Django's command-line utility for administrative tasks."""
+import os
+import sys
+
+
+def main():
+    """Run administrative tasks."""
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
+    try:
+        from django.core.management import execute_from_command_line
+    except ImportError as exc:
+        raise ImportError(
+            "Couldn't import Django. Are you sure it's installed and "
+            "available on your PYTHONPATH environment variable? Did you "
+            "forget to activate a virtual environment?"
+        ) from exc
+    execute_from_command_line(sys.argv)
+
+
+if __name__ == '__main__':
+    main()
+
+
+
+================================================
+FILE: backend/requirements.txt
+================================================
+Django>=4.2,<5.0
+djangorestframework>=3.14,<4.0
+django-cors-headers>=4.0,<5.0
+python-decouple>=3.8
+python-dotenv>=1.0.0
+tavily-python>=0.3.0
+openai>=1.0.0
+chromadb>=0.4.0
+
+
+================================================
+FILE: backend/backend/__init__.py
+================================================
+
+
+
+================================================
+FILE: backend/backend/asgi.py
+================================================
+"""
+ASGI config for backend project.
+
+It exposes the ASGI callable as a module-level variable named ``application``.
+
+For more information on this file, see
+https://docs.djangoproject.com/en/5.0/howto/deployment/asgi/
+"""
+
+import os
+
+from django.core.asgi import get_asgi_application
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
+
+application = get_asgi_application()
+
+
+
+================================================
+FILE: backend/backend/settings.py
+================================================
+import os
+from pathlib import Path
+from decouple import config
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+SECRET_KEY = config('DJANGO_SECRET_KEY', default='django-insecure-&amp;!j9#6^g8$l2@mn#_=x&amp;+q9r^f5s3v^y4w#(k$d')
+DEBUG = config('DJANGO_DEBUG', default=True, cast=bool)
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
+
+INSTALLED_APPS = [
+    'django.contrib.admin',
+    'django.contrib.auth',
+    'django.contrib.contenttypes',
+    'django.contrib.sessions',
+    'django.contrib.messages',
+    'django.contrib.staticfiles',
+    'rest_framework',
+    'corsheaders',
+    'chat',
+]
+
+MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
+    'django.middleware.security.SecurityMiddleware',
+    'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.messages.middleware.MessageMiddleware',
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+]
+
+ROOT_URLCONF = 'backend.urls'
+
+TEMPLATES = [
+    {
+        'BACKEND': 'django.template.backends.django.DjangoTemplates',
+        'DIRS': [],
+        'APP_DIRS': True,
+        'OPTIONS': {
+            'context_processors': [
+                'django.template.context_processors.debug',
+                'django.template.context_processors.request',
+                'django.contrib.auth.context_processors.auth',
+                'django.contrib.messages.context_processors.messages',
+            ],
+        },
+    },
+]
+
+WSGI_APPLICATION = 'backend.wsgi.application'
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
+    }
+}
+
+AUTH_PASSWORD_VALIDATORS = [
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
+]
+
+LANGUAGE_CODE = 'en-us'
+TIME_ZONE = 'UTC'
+USE_I18N = True
+USE_TZ = True
+
+STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+CORS_ALLOW_CREDENTIALS = True
+
+REST_FRAMEWORK = {
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+    ],
+    'DEFAULT_PARSER_CLASSES': [
+        'rest_framework.parsers.JSONParser',
+    ],
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.SessionAuthentication',
+    ],
+}
+
+
+================================================
+FILE: backend/backend/urls.py
+================================================
+from django.contrib import admin
+from django.urls import path, include
+
+urlpatterns = [
+    path('admin/', admin.site.urls),
+    path('api/', include('chat.urls')),
+]
+
+
+================================================
+FILE: backend/backend/wsgi.py
+================================================
+"""
+WSGI config for backend project.
+
+It exposes the WSGI callable as a module-level variable named ``application``.
+
+For more information on this file, see
+https://docs.djangoproject.com/en/5.0/howto/deployment/wsgi/
+"""
+
+import os
+
+from django.core.wsgi import get_wsgi_application
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
+
+application = get_wsgi_application()
+
+
+
+================================================
+FILE: backend/chat/__init__.py
+================================================
+
+
+
+================================================
+FILE: backend/chat/admin.py
+================================================
+from django.contrib import admin
+
+# Register your models here.
+
+
+
+================================================
+FILE: backend/chat/apps.py
+================================================
+from django.apps import AppConfig
+
+
+class ChatConfig(AppConfig):
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'chat'
+
+
+
+================================================
+FILE: backend/chat/models.py
+================================================
+from django.db import models
+
+class Conversation(models.Model):
+    session_key = models.CharField(max_length=40, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class Message(models.Model):
+    ROLE_CHOICES = (
+        ('user', 'User'),
+        ('assistant', 'Assistant'),
+        ('system', 'System'),
+    )
+    conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='messages')
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES)
+    content = models.TextField()
+    timestamp = models.DateTimeField(auto_now_add=True)
+    # Optional: store the rating for assistant messages
+    rating = models.IntegerField(null=True, blank=True)  # 1-5
+
+
+================================================
+FILE: backend/chat/serializers.py
+================================================
+from rest_framework import serializers
+from .models import Message, Conversation
+
+class MessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Message
+        fields = ['id', 'role', 'content', 'timestamp', 'rating']
+
+class ConversationSerializer(serializers.ModelSerializer):
+    messages = MessageSerializer(many=True, read_only=True)
+    class Meta:
+        model = Conversation
+        fields = ['id', 'created_at', 'updated_at', 'messages']
+
+
+================================================
+FILE: backend/chat/services.py
+================================================
+import os
+from dotenv import load_dotenv
+from tavily import TavilyClient
+from openai import OpenAI
+import chromadb
+from chromadb.utils import embedding_functions
+
+load_dotenv()
+
+# Validate API keys (will be checked at startup)
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not TAVILY_API_KEY or not OPENAI_API_KEY:
+    raise ValueError("Missing API keys in environment")
+
+# Initialize clients (singletons)
+tavily = TavilyClient(api_key=TAVILY_API_KEY)
+openai = OpenAI(api_key=OPENAI_API_KEY)
+
+# ChromaDB for RL memory
+client = chromadb.PersistentClient(path="./chroma_db")  # relative to backend/
+embedding_fn = embedding_functions.OpenAIEmbeddingFunction(
+    api_key=OPENAI_API_KEY,
+    model_name="text-embedding-3-small"
+)
+
+pos_collection = client.get_or_create_collection(
+    name="successful_interactions",
+    embedding_function=embedding_fn
+)
+neg_collection = client.get_or_create_collection(
+    name="unsuccessful_interactions",
+    embedding_function=embedding_fn
+)
+
+def add_interaction(query: str, response: str, rating: int):
+    """Store interaction in ChromaDB based on rating."""
+    collection = pos_collection if rating >= 4 else neg_collection
+    count = collection.count()
+    doc_id = f"interaction_{count}"
+    collection.add(
+        documents=[f"Q: {query}\nA: {response}"],
+        metadatas=[{"query": query, "rating": rating}],
+        ids=[doc_id]
+    )
+
+def retrieve_examples(query: str, n_pos: int = 2, n_neg: int = 1):
+    """Retrieve similar successful/unsuccessful examples."""
+    pos_examples = []
+    neg_examples = []
+    if pos_collection.count() > 0:
+        pos_results = pos_collection.query(query_texts=[query], n_results=n_pos)
+        if pos_results['documents'][0]:
+            for doc, meta in zip(pos_results['documents'][0], pos_results['metadatas'][0]):
+                pos_examples.append(f"✅ Good example (rating {meta['rating']}):\n{doc}")
+    if neg_collection.count() > 0:
+        neg_results = neg_collection.query(query_texts=[query], n_results=n_neg)
+        if neg_results['documents'][0]:
+            for doc, meta in zip(neg_results['documents'][0], neg_results['metadatas'][0]):
+                neg_examples.append(f"❌ Poor example (rating {meta['rating']}) – avoid these mistakes:\n{doc}")
+    return "\n\n".join(pos_examples), "\n\n".join(neg_examples)
+
+def search_web(query: str, context_query: str = None) -> str:
+    """Query Tavily, optionally expand with context."""
+    if context_query and context_query.lower() not in query.lower():
+        expanded_query = f"{context_query} {query}"
+    else:
+        expanded_query = query
+    try:
+        response = tavily.search(query=expanded_query, search_depth="advanced")
+        results = response.get("results", [])
+        if not results:
+            return "No relevant web search results were found for this query."
+        context_lines = ["Web Search Results:"]
+        for idx, res in enumerate(results, 1):
+            title = res.get("title", "Untitled")
+            content = res.get("content", "").strip()
+            url = res.get("url", "")
+            if len(content) > 500:
+                content = content[:500] + "..."
+            context_lines.append(f"\n{idx}. **{title}**")
+            context_lines.append(f"   {content}")
+            context_lines.append(f"   Source: {url}")
+        return "\n".join(context_lines)
+    except Exception as e:
+        return f"Error during web search: {str(e)}"
+
+BASE_SYSTEM_PROMPT = """You are an expert research assistant..."""  # same as original
+
+def build_messages(conversation_history, user_input, pos_examples, neg_examples, search_context, previous_user_input=None, low_rating_flag=False, previous_response=None):
+    """Construct the list of messages for OpenAI API."""
+    messages = [{"role": "system", "content": BASE_SYSTEM_PROMPT}]
+    # Add conversation history (excluding system prompt)
+    for msg in conversation_history:
+        if msg['role'] != 'system':
+            messages.append(msg)
+    # Build the user message with examples and search context
+    user_parts = []
+    if pos_examples:
+        user_parts.append(f"Here are some examples of successful answers to similar questions:\n{pos_examples}")
+    if neg_examples:
+        user_parts.append(f"Pay attention to the following examples that were rated poorly. Do NOT repeat these mistakes:\n{neg_examples}")
+    if previous_user_input:
+        context_hint = f"Note: The user's previous question was about '{previous_user_input}'. Please interpret the current query ('{user_input}') in that context."
+        user_parts.append(context_hint)
+    user_parts.append(f"User question: {user_input}")
+    user_parts.append(search_context)
+    if low_rating_flag and previous_user_input and previous_response:
+        improvement_note = (
+            f"Note: The previous question was: \"{previous_user_input}\" and your answer was:\n"
+            f"\"{previous_response}\"\n"
+            f"That answer was rated poorly. Please ensure your new answer for the current question "
+            f"(\"{user_input}\") addresses the shortcomings and is significantly improved – be more thorough, "
+            f"accurate, well‑cited, and engaging."
+        )
+        user_parts.append(improvement_note)
+    elif low_rating_flag:
+        user_parts.append("Note: The previous answer was rated poorly. Please ensure this response is thorough, accurate, and well‑cited.")
+    user_parts.append("Please answer based on the above search results, and follow the style of the successful examples if relevant.")
+    user_message = "\n\n".join(user_parts)
+    messages.append({"role": "user", "content": user_message})
+    return messages
+
+def ask_assistant(user_input, conversation_history, previous_user_input=None, previous_response=None, low_rating_flag=False, use_web_search=True):
+    """Main function to get assistant response."""
+    # 1. Retrieve similar past examples
+    pos_examples, neg_examples = retrieve_examples(user_input)
+
+    # 2. Get search results if enabled
+    search_context = ""
+    if use_web_search:
+        search_context = search_web(user_input, context_query=previous_user_input)
+    else:
+        search_context = "Web search was disabled by the user. Please answer based on your own knowledge."
+
+    # 3. Build messages
+    messages = build_messages(
+        conversation_history=conversation_history,
+        user_input=user_input,
+        pos_examples=pos_examples,
+        neg_examples=neg_examples,
+        search_context=search_context,
+        previous_user_input=previous_user_input,
+        low_rating_flag=low_rating_flag,
+        previous_response=previous_response
+    )
+
+    # 4. Call OpenAI
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4",
+            messages=messages,
+            temperature=0.3,
+            max_tokens=1500,
+            top_p=0.9,
+            frequency_penalty=0.2,
+            presence_penalty=0.2
+        )
+        assistant_reply = response.choices[0].message.content
+        return assistant_reply
+    except Exception as e:
+        return f"Error generating answer: {str(e)}"
+
+
+================================================
+FILE: backend/chat/tests.py
+================================================
+from django.test import TestCase
+
+# Create your tests here.
+
+
+
+================================================
+FILE: backend/chat/urls.py
+================================================
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    path('chat/', views.chat, name='chat'),
+    path('rate/', views.rate_message, name='rate'),
+    path('history/', views.history, name='history'),
+]
+
+
+================================================
+FILE: backend/chat/views.py
+================================================
+import json
+from django.utils.deprecation import MiddlewareMixin
+from django.contrib.sessions.models import Session
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+from .models import Conversation, Message
+from .serializers import MessageSerializer, ConversationSerializer
+from . import services
+
+def get_or_create_conversation(request):
+    """Get or create a conversation for the current session."""
+    if not request.session.session_key:
+        request.session.create()
+    session_key = request.session.session_key
+    conversation, created = Conversation.objects.get_or_create(session_key=session_key)
+    return conversation
+
+@api_view(['POST'])
+def chat(request):
+    """Handle chat message: user input -> assistant response."""
+    user_input = request.data.get('message', '').strip()
+    use_web_search = request.data.get('use_web_search', True)  # default True
+
+    if not user_input:
+        return Response({'error': 'Message cannot be empty'}, status=status.HTTP_400_BAD_REQUEST)
+
+    conversation = get_or_create_conversation(request)
+
+    # Retrieve conversation history (last 10 messages to keep context manageable)
+    history_messages = conversation.messages.order_by('timestamp')[:10]
+    history_list = [{'role': m.role, 'content': m.content} for m in history_messages]
+
+    # We also need the last user input and assistant response to handle lowâ€‘rating flag
+    # For simplicity, we'll fetch the last two messages (user + assistant) if they exist
+    last_two = conversation.messages.order_by('-timestamp')[:2]
+    previous_user_input = None
+    previous_response = None
+    low_rating_flag = False
+
+    if len(last_two) >= 2:
+        # Assuming order: most recent first, so last_two[0] is assistant, last_two[1] is user? Actually depends.
+        # Better to iterate and find last user and assistant
+        last_user_msg = conversation.messages.filter(role='user').order_by('-timestamp').first()
+        last_assistant_msg = conversation.messages.filter(role='assistant').order_by('-timestamp').first()
+        if last_user_msg and last_assistant_msg:
+            previous_user_input = last_user_msg.content
+            previous_response = last_assistant_msg.content
+            # Check if last assistant message was rated low (rating < 4)
+            if last_assistant_msg.rating is not None and last_assistant_msg.rating < 4:
+                low_rating_flag = True
+
+    # Save user message
+    user_message = Message.objects.create(
+        conversation=conversation,
+        role='user',
+        content=user_input
+    )
+
+    # Get assistant response
+    assistant_reply = services.ask_assistant(
+        user_input=user_input,
+        conversation_history=history_list,
+        previous_user_input=previous_user_input,
+        previous_response=previous_response,
+        low_rating_flag=low_rating_flag,
+        use_web_search=use_web_search
+    )
+
+    # Save assistant message (rating initially null)
+    assistant_message = Message.objects.create(
+        conversation=conversation,
+        role='assistant',
+        content=assistant_reply
+    )
+
+    return Response({
+        'user_message': MessageSerializer(user_message).data,
+        'assistant_message': MessageSerializer(assistant_message).data
+    })
+
+@api_view(['POST'])
+def rate_message(request):
+    """Submit rating for an assistant message and store in ChromaDB."""
+    message_id = request.data.get('message_id')
+    rating = request.data.get('rating')
+
+    if not message_id or rating is None:
+        return Response({'error': 'message_id and rating required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        message = Message.objects.get(id=message_id, role='assistant')
+    except Message.DoesNotExist:
+        return Response({'error': 'Message not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    message.rating = rating
+    message.save()
+
+    # Also store in ChromaDB for RL memory
+    # We need the corresponding user query that prompted this response
+    # Find the preceding user message in the same conversation
+    previous_user_msg = Message.objects.filter(
+        conversation=message.conversation,
+        role='user',
+        timestamp__lt=message.timestamp
+    ).order_by('-timestamp').first()
+
+    if previous_user_msg:
+        services.add_interaction(previous_user_msg.content, message.content, rating)
+
+    return Response({'status': 'rated'})
+
+@api_view(['GET'])
+def history(request):
+    """Get conversation history for the current session."""
+    conversation = get_or_create_conversation(request)
+    messages = conversation.messages.order_by('timestamp')
+    serializer = MessageSerializer(messages, many=True)
+    return Response(serializer.data)
+
+
+================================================
+FILE: backend/chat/migrations/0001_initial.py
+================================================
+# Generated by Django 5.0.6 on 2026-02-24 10:54
+
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name='Conversation',
+            fields=[
+                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('session_key', models.CharField(db_index=True, max_length=40)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+            ],
+        ),
+        migrations.CreateModel(
+            name='Message',
+            fields=[
+                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('role', models.CharField(choices=[('user', 'User'), ('assistant', 'Assistant'), ('system', 'System')], max_length=10)),
+                ('content', models.TextField()),
+                ('timestamp', models.DateTimeField(auto_now_add=True)),
+                ('rating', models.IntegerField(blank=True, null=True)),
+                ('conversation', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='messages', to='chat.conversation')),
+            ],
+        ),
+    ]
+
+
+
+================================================
+FILE: backend/chat/migrations/__init__.py
+================================================
+
+
+
+================================================
+FILE: backend/chroma_db/chroma.sqlite3
+================================================
+[Non-text file]
+
+
+================================================
+FILE: backend/chroma_db/6a2d2a81-f430-461f-adc6-010a6baa735b/data_level0.bin
+================================================
+[Non-text file]
+
+
+================================================
+FILE: backend/chroma_db/6a2d2a81-f430-461f-adc6-010a6baa735b/header.bin
+================================================
+[Non-text file]
+
+
+================================================
+FILE: backend/chroma_db/6a2d2a81-f430-461f-adc6-010a6baa735b/length.bin
+================================================
+[Non-text file]
+
+
+================================================
+FILE: backend/chroma_db/6a2d2a81-f430-461f-adc6-010a6baa735b/link_lists.bin
+================================================
+
+
+
+================================================
+FILE: chroma_db/chroma.sqlite3
+================================================
+[Non-text file]
+
+
+================================================
+FILE: chroma_db/9677fbd0-9b61-4069-b919-de7971c4e771/data_level0.bin
+================================================
+[Non-text file]
+
+
+================================================
+FILE: chroma_db/9677fbd0-9b61-4069-b919-de7971c4e771/header.bin
+================================================
+[Non-text file]
+
+
+================================================
+FILE: chroma_db/9677fbd0-9b61-4069-b919-de7971c4e771/length.bin
+================================================
+[Non-text file]
+
+
+================================================
+FILE: chroma_db/9677fbd0-9b61-4069-b919-de7971c4e771/link_lists.bin
+================================================
+
+
+
+================================================
+FILE: chroma_db/a4d1a81d-01c3-43ba-aac1-23b2303d46f2/data_level0.bin
+================================================
+[Non-text file]
+
+
+================================================
+FILE: chroma_db/a4d1a81d-01c3-43ba-aac1-23b2303d46f2/header.bin
+================================================
+[Non-text file]
+
+
+================================================
+FILE: chroma_db/a4d1a81d-01c3-43ba-aac1-23b2303d46f2/length.bin
+================================================
+[Non-text file]
+
+
+================================================
+FILE: chroma_db/a4d1a81d-01c3-43ba-aac1-23b2303d46f2/link_lists.bin
+================================================
+
+
+
+================================================
+FILE: frontend/README.md
+================================================
+# React + Vite
+
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+
+Currently, two official plugins are available:
+
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+
+## React Compiler
+
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+
+## Expanding the ESLint configuration
+
+If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+
+
+
+================================================
+FILE: frontend/eslint.config.js
+================================================
+import js from '@eslint/js'
+import globals from 'globals'
+import reactHooks from 'eslint-plugin-react-hooks'
+import reactRefresh from 'eslint-plugin-react-refresh'
+import { defineConfig, globalIgnores } from 'eslint/config'
+
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{js,jsx}'],
+    extends: [
+      js.configs.recommended,
+      reactHooks.configs.flat.recommended,
+      reactRefresh.configs.vite,
+    ],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: globals.browser,
+      parserOptions: {
+        ecmaVersion: 'latest',
+        ecmaFeatures: { jsx: true },
+        sourceType: 'module',
+      },
+    },
+    rules: {
+      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+    },
+  },
+])
+
+
+
+================================================
+FILE: frontend/index.html
+================================================
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Research Assistant</title>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz@14..32&display=swap" rel="stylesheet">
+    <!-- Font Awesome 6 (free) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+
+
+================================================
+FILE: frontend/package.json
+================================================
+{
+  "name": "frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.13.5",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "autoprefixer": "^10.4.24",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.2.1",
+    "vite": "^7.3.1"
+  }
+}
+
+
+
+================================================
+FILE: frontend/tailwind.config.js
+================================================
+export default {
+  content: ["./index.html", "./src/**/*.{js,jsx}"],
+  theme: {
+    extend: {
+      colors: {
+        glass: "rgba(255,255,255,0.08)",
+        borderGlass: "rgba(255,255,255,0.12)",
+        accent: "#6366f1",   // Indigo-500
+        accentSoft: "#818cf8"
+      },
+      boxShadow: {
+        glass: "0 8px 30px rgba(0,0,0,0.25)",
+      },
+      backdropBlur: {
+        xl: "20px",
+      },
+      borderRadius: {
+        xl: "1.25rem",
+        "2xl": "1.75rem",
+      },
+      animation: {
+        "fade-up": "fadeUp 0.3s ease-out",
+        "pulse-soft": "pulse 2s infinite",
+      },
+      keyframes: {
+        fadeUp: {
+          "0%": { opacity: 0, transform: "translateY(6px)" },
+          "100%": { opacity: 1, transform: "translateY(0)" },
+        },
+      },
+    },
+  },
+  plugins: [],
+};
+
+
+================================================
+FILE: frontend/vite.config.js
+================================================
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react()],
+})
+
+
+
+================================================
+FILE: frontend/src/api.js
+================================================
+import axios from 'axios';
+
+const API_BASE = 'http://localhost:8000/api';
+
+export const sendMessage = async (message, useWebSearch) => {
+  const response = await axios.post(`${API_BASE}/chat/`, { message, use_web_search: useWebSearch });
+  return response.data;
+};
+
+export const rateMessage = async (messageId, rating) => {
+  const response = await axios.post(`${API_BASE}/rate/`, { message_id: messageId, rating });
+  return response.data;
+};
+
+export const fetchHistory = async () => {
+  const response = await axios.get(`${API_BASE}/history/`);
+  return response.data;
+};
+
+
+================================================
+FILE: frontend/src/App.css
+================================================
+/* App.css */
+.app-container {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow);
+  border-radius: 2rem 2rem 0 0;
+  overflow: hidden;
+}
+
+@media (min-width: 768px) {
+  .app-container {
+    margin: 2rem auto;
+    height: calc(100vh - 4rem);
+    border-radius: 2rem;
+  }
+}
+
+
+================================================
+FILE: frontend/src/App.jsx
+================================================
+import { useEffect, useRef, useState } from "react";
+import { sendMessage, fetchHistory, rateMessage } from "./api";
+import ChatMessage from "./components/ChatMessage";
+import Rating from "./components/Rating";
+import TypingIndicator from "./components/TypingIndicator";
+
+export default function App() {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [useWebSearch, setUseWebSearch] = useState(true);
+  const bottomRef = useRef(null);
+
+  useEffect(() => {
+    fetchHistory().then(setMessages);
+  }, []);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
+
+  const handleSend = async () => {
+    if (!input.trim() || loading) return;
+
+    const tempUser = {
+      id: Date.now(),
+      role: "user",
+      content: input,
+    };
+
+    setMessages((prev) => [...prev, tempUser]);
+    setInput("");
+    setLoading(true);
+
+    try {
+      const res = await sendMessage(tempUser.content, useWebSearch);
+      setMessages((prev) => [
+        ...prev.filter((m) => m.id !== tempUser.id),
+        res.user_message,
+        res.assistant_message,
+      ]);
+    } catch (error) {
+      console.error("Send failed:", error);
+      // Optional: show error toast
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle rating submission
+  const handleRate = async (messageId, rating) => {
+    try {
+      await rateMessage(messageId, rating);
+      // Update local state so the rating stars disappear
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId ? { ...msg, rating } : msg
+        )
+      );
+    } catch (error) {
+      console.error("Rating failed:", error);
+    }
+  };
+
+  return (
+    <div className="h-screen bg-gradient-to-br from-indigo-900 via-slate-900 to-black text-white">
+      {/* Header */}
+      <header className="sticky top-0 z-20 backdrop-blur-xl bg-white/10 border-b border-white/10">
+        <div className="max-w-5xl mx-auto px-4 py-4 flex justify-between items-center">
+          <h1 className="text-lg font-semibold tracking-wide">
+            <i className="fas fa-robot mr-2"></i> AI Research Assistant
+          </h1>
+
+          <label className="flex items-center gap-2 text-sm opacity-80">
+            <span>Web Search</span>
+            <input
+              type="checkbox"
+              checked={useWebSearch}
+              onChange={(e) => setUseWebSearch(e.target.checked)}
+              className="accent-indigo-500"
+            />
+          </label>
+        </div>
+      </header>
+
+      {/* Chat Area */}
+      <main className="flex-1 overflow-y-auto px-4 py-6 custom-scroll">
+        <div className="max-w-5xl mx-auto space-y-5">
+          {messages.map((msg) => (
+            <div key={msg.id}>
+              <ChatMessage message={msg} />
+              {msg.role === "assistant" && msg.rating == null && (
+                <div className="ml-14 mt-1">
+                  <Rating messageId={msg.id} onRate={handleRate} />
+                </div>
+              )}
+            </div>
+          ))}
+
+          {loading && (
+            <div className="ml-14">
+              <TypingIndicator />
+            </div>
+          )}
+
+          <div ref={bottomRef} />
+        </div>
+      </main>
+
+      {/* Input */}
+      <footer className="sticky bottom-0 bg-black/40 backdrop-blur-xl border-t border-white/10">
+        <div className="max-w-5xl mx-auto px-4 py-4">
+          <div className="relative">
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
+              placeholder="Ask anything..."
+              rows={1}
+              className="w-full resize-none rounded-2xl bg-white/10 border border-white/10 px-5 py-4 pr-14 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+
+            <button
+              onClick={handleSend}
+              disabled={!input.trim() || loading}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-indigo-400 hover:text-indigo-300 disabled:opacity-40 text-xl"
+              aria-label="Send message"
+            >
+              âž¤
+            </button>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+
+================================================
+FILE: frontend/src/index.css
+================================================
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+}
+
+/* Smooth fade animation */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.25s ease-out;
+}
+
+/* Custom scrollbar */
+.custom-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.custom-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.2);
+  border-radius: 10px;
+}
+
+.custom-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+
+================================================
+FILE: frontend/src/main.jsx
+================================================
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.jsx'
+
+createRoot(document.getElementById('root')).render(
+  <StrictMode>
+    <App />
+  </StrictMode>
+)
+
+
+================================================
+FILE: frontend/src/components/ChatMessage.jsx
+================================================
+export default function ChatMessage({ message }) {
+  const isUser = message.role === "user";
+
+  return (
+    <div
+      className={`flex items-end gap-3 animate-fade-in ${
+        isUser ? "justify-end" : "justify-start"
+      }`}
+    >
+      {!isUser && (
+        <div className="w-9 h-9 flex items-center justify-center rounded-full bg-indigo-600">
+          <i className="fas fa-robot text-white"></i>
+        </div>
+      )}
+
+      <div
+        className={`max-w-[75%] px-5 py-3 rounded-2xl shadow-lg ${
+          isUser
+            ? "bg-indigo-600 text-white rounded-br-none"
+            : "bg-white/90 text-gray-900 rounded-bl-none"
+        }`}
+      >
+        {message.content}
+      </div>
+
+      {isUser && (
+        <div className="w-9 h-9 flex items-center justify-center rounded-full bg-slate-700">
+          <i className="fas fa-user text-white"></i>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+================================================
+FILE: frontend/src/components/Rating.jsx
+================================================
+import { useState } from "react";
+
+export default function Rating({ messageId, onRate }) {
+  const [hover, setHover] = useState(0);
+
+  return (
+    <div className="flex gap-1">
+      {[1, 2, 3, 4, 5].map((star) => (
+        <button
+          key={star}
+          onClick={() => onRate(messageId, star)}
+          onMouseEnter={() => setHover(star)}
+          onMouseLeave={() => setHover(0)}
+          className={`text-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded ${
+            star <= hover ? "text-yellow-400" : "text-gray-300"
+          }`}
+          aria-label={`Rate ${star} star${star > 1 ? "s" : ""}`}
+        >
+          â˜…
+        </button>
+      ))}
+    </div>
+  );
+}
+
+
+================================================
+FILE: frontend/src/components/TypingIndicator.jsx
+================================================
+export default function TypingIndicator() {
+  return (
+    <div className="flex gap-1 px-4 py-2 bg-white/80 text-black rounded-xl w-fit">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="w-2 h-2 bg-gray-500 rounded-full animate-bounce"
+          style={{ animationDelay: `${i * 150}ms` }}
+        />
+      ))}
+    </div>
+  );
+}
+

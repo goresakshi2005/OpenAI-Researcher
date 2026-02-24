@@ -31,24 +31,21 @@ def chat(request):
     history_messages = conversation.messages.order_by('timestamp')[:10]
     history_list = [{'role': m.role, 'content': m.content} for m in history_messages]
 
-    # We also need the last user input and assistant response to handle low‑rating flag
-    # For simplicity, we'll fetch the last two messages (user + assistant) if they exist
-    last_two = conversation.messages.order_by('-timestamp')[:2]
+    # Determine previous user input, assistant response, and low-rating flag
     previous_user_input = None
     previous_response = None
     low_rating_flag = False
 
-    if len(last_two) >= 2:
-        # Assuming order: most recent first, so last_two[0] is assistant, last_two[1] is user? Actually depends.
-        # Better to iterate and find last user and assistant
-        last_user_msg = conversation.messages.filter(role='user').order_by('-timestamp').first()
-        last_assistant_msg = conversation.messages.filter(role='assistant').order_by('-timestamp').first()
-        if last_user_msg and last_assistant_msg:
-            previous_user_input = last_user_msg.content
-            previous_response = last_assistant_msg.content
-            # Check if last assistant message was rated low (rating < 4)
-            if last_assistant_msg.rating is not None and last_assistant_msg.rating < 4:
-                low_rating_flag = True
+    # Get the most recent user and assistant messages
+    last_user_msg = conversation.messages.filter(role='user').order_by('-timestamp').first()
+    last_assistant_msg = conversation.messages.filter(role='assistant').order_by('-timestamp').first()
+
+    if last_user_msg and last_assistant_msg:
+        previous_user_input = last_user_msg.content
+        previous_response = last_assistant_msg.content
+        # Check if the last assistant message was rated low (<4)
+        if last_assistant_msg.rating is not None and last_assistant_msg.rating < 4:
+            low_rating_flag = True
 
     # Save user message
     user_message = Message.objects.create(
@@ -97,7 +94,6 @@ def rate_message(request):
     message.save()
 
     # Also store in ChromaDB for RL memory
-    # We need the corresponding user query that prompted this response
     # Find the preceding user message in the same conversation
     previous_user_msg = Message.objects.filter(
         conversation=message.conversation,

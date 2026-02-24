@@ -1,29 +1,24 @@
-import React, { useState } from 'react';
+import { useState } from "react";
 
-const Rating = ({ messageId, onRate }) => {
+export default function Rating({ messageId, onRate }) {
   const [hover, setHover] = useState(0);
-  const [rating, setRating] = useState(0);
-
-  const handleClick = (value) => {
-    setRating(value);
-    onRate(messageId, value);
-  };
 
   return (
-    <div className="flex items-center space-x-1">
-      {[1,2,3,4,5].map(star => (
+    <div className="flex gap-1">
+      {[1, 2, 3, 4, 5].map((star) => (
         <button
           key={star}
-          className={`text-2xl ${star <= (hover || rating) ? 'text-yellow-400' : 'text-gray-300'}`}
+          onClick={() => onRate(messageId, star)}
           onMouseEnter={() => setHover(star)}
           onMouseLeave={() => setHover(0)}
-          onClick={() => handleClick(star)}
+          className={`text-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded ${
+            star <= hover ? "text-yellow-400" : "text-gray-300"
+          }`}
+          aria-label={`Rate ${star} star${star > 1 ? "s" : ""}`}
         >
           ★
         </button>
       ))}
     </div>
   );
-};
-
-export default Rating;
+}
