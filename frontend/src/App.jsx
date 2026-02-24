@@ -9,6 +9,7 @@ export default function App() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [useWebSearch, setUseWebSearch] = useState(true);
+  const [conversationId, setConversationId] = useState(null);
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -33,7 +34,8 @@ export default function App() {
     setLoading(true);
 
     try {
-      const res = await sendMessage(tempUser.content, useWebSearch);
+      const res = await sendMessage(tempUser.content, useWebSearch, conversationId);
+      if (res.conversation_id) setConversationId(res.conversation_id);
       setMessages((prev) => [
         ...prev.filter((m) => m.id !== tempUser.id),
         res.user_message,

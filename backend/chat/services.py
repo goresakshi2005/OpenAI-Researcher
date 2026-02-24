@@ -137,18 +137,7 @@ def build_messages(conversation_history, user_input, pos_examples, neg_examples,
     if summary:
         user_parts.append(summary)
 
-    # 2. Positive examples
-    if pos_examples:
-        user_parts.append(f"Here are some examples of successful answers to similar questions:\n{pos_examples}")
-
-    # 3. Negative examples
-    if neg_examples:
-        user_parts.append(f"Pay attention to the following examples that were rated poorly. Do NOT repeat these mistakes:\n{neg_examples}")
-
-    # 4. Current user question (place early to give it prominence)
-    user_parts.append(f"User question: {user_input}")
-
-    # 5. Enhanced context hint if previous exchange exists (always include, not just for low ratings)
+    # 2. Enhanced context hint (if previous exchange exists) – place early for maximum impact
     if previous_user_input and previous_response:
         context_hint = (
             f"Note: The user's previous question was: \"{previous_user_input}\"\n"
@@ -160,6 +149,17 @@ def build_messages(conversation_history, user_input, pos_examples, neg_examples,
     elif previous_user_input:
         context_hint = f"Note: The user's previous question was about '{previous_user_input}'. Please interpret the current query ('{user_input}') in that context."
         user_parts.append(context_hint)
+
+    # 3. Current user question (now after context hint, so the assistant knows it's a follow‑up)
+    user_parts.append(f"User question: {user_input}")
+
+    # 4. Positive examples
+    if pos_examples:
+        user_parts.append(f"Here are some examples of successful answers to similar questions:\n{pos_examples}")
+
+    # 5. Negative examples
+    if neg_examples:
+        user_parts.append(f"Pay attention to the following examples that were rated poorly. Do NOT repeat these mistakes:\n{neg_examples}")
 
     # 6. Web search results
     user_parts.append(search_context)
@@ -209,7 +209,7 @@ def ask_assistant(user_input, conversation_history, previous_user_input=None, pr
     # 4. Call OpenAI
     try:
         response = openai.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4",  # or "gpt-4o" for better performance
             messages=messages,
             temperature=0.3,
             max_tokens=1500,

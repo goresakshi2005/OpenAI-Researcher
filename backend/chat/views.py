@@ -10,6 +10,19 @@ from . import services
 
 def get_or_create_conversation(request):
     """Get or create a conversation for the current session."""
+    # Allow explicit conversation lookup via request (frontend can pass `conversation_id`) to avoid relying on cookies.
+    conversation_id = None
+    if request.method == 'POST':
+        conversation_id = request.data.get('conversation_id')
+    else:
+        conversation_id = request.GET.get('conversation_id')
+
+    if conversation_id:
+        try:
+            return Conversation.objects.get(id=conversation_id)
+        except Conversation.DoesNotExist:
+            pass
+
     if not request.session.session_key:
         request.session.create()
     session_key = request.session.session_key
@@ -71,8 +84,8 @@ def chat(request):
         role='assistant',
         content=assistant_reply
     )
-
     return Response({
+        'conversation_id': conversation.id,
         'user_message': MessageSerializer(user_message).data,
         'assistant_message': MessageSerializer(assistant_message).data
     })
@@ -110,6 +123,7 @@ def rate_message(request):
 @api_view(['GET'])
 def history(request):
     """Get conversation history for the current session."""
+    # Allow explicit conversation id in query params so frontend can fetch specific conversation
     conversation = get_or_create_conversation(request)
     messages = conversation.messages.order_by('timestamp')
     serializer = MessageSerializer(messages, many=True)
