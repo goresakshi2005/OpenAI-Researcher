@@ -27,8 +27,9 @@ def chat(request):
 
     conversation = get_or_create_conversation(request)
 
-    # Retrieve conversation history (last 10 messages to keep context manageable)
-    history_messages = conversation.messages.order_by('timestamp')[:10]
+    # Retrieve the most recent 10 messages in chronological order (oldest first)
+    recent_messages = conversation.messages.order_by('-timestamp')[:10]
+    history_messages = list(reversed(recent_messages))  # now oldest first
     history_list = [{'role': m.role, 'content': m.content} for m in history_messages]
 
     # Determine previous user input, assistant response, and low-rating flag
