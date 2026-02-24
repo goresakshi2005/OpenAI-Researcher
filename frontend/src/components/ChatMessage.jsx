@@ -1,9 +1,11 @@
-export default function ChatMessage({ message }) {
+import MarkdownMessage from './MarkdownMessage';
+
+export default function ChatMessage({ message, onCopy, onRegenerate, onStop, isStreaming }) {
   const isUser = message.role === "user";
 
   return (
     <div
-      className={`flex items-end gap-3 animate-fade-in ${
+      className={`group flex items-end gap-3 animate-fade-in ${
         isUser ? "justify-end" : "justify-start"
       }`}
     >
@@ -14,13 +16,46 @@ export default function ChatMessage({ message }) {
       )}
 
       <div
-        className={`max-w-[75%] px-5 py-3 rounded-2xl shadow-lg ${
+        className={`relative max-w-[75%] px-5 py-3 rounded-2xl shadow-lg break-words bubble ${
           isUser
-            ? "bg-indigo-600 text-white rounded-br-none"
-            : "bg-white/90 text-gray-900 rounded-bl-none"
+            ? "msg-user text-white rounded-br-none"
+            : "msg-assistant text-gray-900 rounded-bl-none"
         }`}
       >
-        {message.content}
+        <div className="prose max-w-full text-sm">
+          <MarkdownMessage content={message.content} />
+        </div>
+
+        {/* Action buttons (appear on hover) */}
+        {!isUser && (
+          <div className="absolute -top-8 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2 items-center hidden-on-mobile">
+            <button
+              onClick={() => onCopy && onCopy(message)}
+              className="bg-white/10 hover:bg-white/20 px-2 py-1 rounded text-xs"
+              title="Copy"
+            >
+              Copy
+            </button>
+
+            <button
+              onClick={() => onRegenerate && onRegenerate(message)}
+              className="bg-white/10 hover:bg-white/20 px-2 py-1 rounded text-xs"
+              title="Regenerate"
+            >
+              Regenerate
+            </button>
+
+            {isStreaming ? (
+              <button
+                onClick={() => onStop && onStop()}
+                className="bg-red-600 hover:bg-red-500 px-2 py-1 rounded text-xs"
+                title="Stop"
+              >
+                Stop
+              </button>
+            ) : null}
+          </div>
+        )}
       </div>
 
       {isUser && (

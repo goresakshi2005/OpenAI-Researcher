@@ -35,3 +35,77 @@ html, body, #root {
 .custom-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* Layout helpers */
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.chat-column {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-inner {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: center;
+}
+
+.chat-pane {
+  width: 100%;
+  max-width: 900px;
+}
+
+/* Message bubble tweaks */
+.msg-user {
+  background: linear-gradient(90deg,#4f46e5,#6366f1);
+}
+.msg-assistant {
+  background: rgba(255,255,255,0.95);
+  color: #0f172a;
+}
+
+.bubble {
+  word-break: break-word;
+}
+
+/* Sidebar responsive */
+@media (max-width: 767px) {
+  .hidden-on-mobile { display: none !important; }
+}
+
+/* Input area */
+.input-area textarea { min-height: 44px; max-height: 200px; }
+
+/* Prose / markdown fallback */
+.prose img { max-width: 100%; border-radius: 6px; }
+.prose pre { background: #0b1220; color: #e6eef8; padding: 12px; border-radius: 8px; overflow:auto }
+
+/* Tiny utility for subtle borders */
+.soft-border { border: 1px solid rgba(255,255,255,0.06); }
+
+/* Transition helper for width changes */
+.transition-width { transition: width 0.28s ease-in-out; }
+
+/* Toggle button */
+.toggle-btn { background: rgba(255,255,255,0.04); padding: 6px; border-radius: 6px; }
+
+/* Mobile input area tweaks */
+@media (max-width: 767px) {
+  .input-area { padding-bottom: env(safe-area-inset-bottom); }
+  .input-area textarea { font-size: 16px; padding-right: 64px; }
+}
+
+/* Improve typing indicator spacing */
+.typing-indicator { margin-left: 3.5rem; }
+
+/* Sidebar mobile slide transition */
+.sidebar { transition: transform 0.28s ease-in-out, width 0.28s ease-in-out; }
+
+/* Ensure the fixed mobile sidebar overlays content */
+@media (max-width: 767px) {
+  .sidebar { width: 280px; }
+}
